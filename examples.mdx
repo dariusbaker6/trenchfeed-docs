@@ -1,0 +1,497 @@
+---
+title: 'Code Examples'
+description: 'Implementation examples in multiple languages'
+---
+
+## Python Trading Bot
+
+Complete example of a trading bot that monitors swap events and executes trades:
+
+```python
+import requests
+import json
+from datetime import datetime
+
+API_KEY = "YOUR_API_KEY"
+BASE_URL = "http://66.42.112.172:8000"
+
+class TradingBot:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.headers = {"Authorization": f"Bearer {api_key}"}
+    
+    def should_trade(self, event):
+        """Define your trading logic"""
+        features = event.get('features', {})
+        pair = event.get('pair', {})
+        
+        if not features or not pair:
+            return False
+        
+        # Example strategy: High buy pressure + volume
+        buy_ratio = features.get('buy_ratio', 0)
+        price_change_5m = features.get('price_change_5m', 0)
+        
+        metrics = event.get('window_metrics', {}).get('m5', {})
+        volume_5m = metrics.get('volume_usd', 0)
+        
+        if buy_ratio > 0.7 and volume_5m > 10000 and price_change_5m > 5:
+            return True
+        
+        return False
+    
+    def execute_trade(self, event):
+        """Execute your trade"""
+        token = event.get('token', {})
+        pair = event.get('pair', {})
+        
+        print(f"🚀 TRADE SIGNAL!")
+        print(f"Token: {token.get('symbol')} ({token.get('address')})")
+        print(f"Price: ${pair.get('price_usd')}")
+        print(f"DEX: {pair.get('dex')}")
+        
+        # TODO: Add your exchange integration here
+    
+    def run(self):
+        """Main bot loop"""
+        with requests.get(
+            f"{BASE_URL}/stream/pro",
+            headers=self.headers,
+            stream=True
+        ) as response:
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        event = json.loads(line)
+                        
+                        if self.should_trade(event):
+                            self.execute_trade(event)
+                    
+                    except Exception as e:
+                        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    bot = TradingBot(API_KEY)
+    bot.run()
+```
+
+## JavaScript/Node.js Stream Consumer
+
+Stream data and forward to your own webhook:
+
+```javascript
+const https = require('https');
+
+const API_KEY = 'YOUR_API_KEY';
+const WEBHOOK_URL = 'https://your-webhook.com/api/swaps';
+
+const options = {
+  hostname: '66.42.112.172',
+  port: 8000,
+  path: '/stream/pro',
+  method: 'GET',
+  headers: {
+    'Authorization': `Bearer ${API_KEY}`
+  }
+};
+
+function forwardToWebhook(event) {
+  const data = JSON.stringify(event);
+  const url = new URL(WEBHOOK_URL);
+  
+  const webhookOptions = {
+    hostname: url.hostname,
+    path: url.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': data.length
+    }
+  };
+  
+  const req = https.request(webhookOptions);
+  req.write(data);
+  req.end();
+}
+
+https.get(options, (res) => {
+  console.log(`Connected - Status: ${res.statusCode}`);
+  
+  let buffer = '';
+  
+  res.on('data', (chunk) => {
+    buffer += chunk.toString();
+    
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    
+    lines.forEach(line => {
+      if (line.trim()) {
+        try {
+          const event = JSON.parse(line);
+          forwardToWebhook(event);
+        } catch (err) {
+          console.error('Parse error:', err);
+        }
+      }
+    });
+  });
+  
+  res.on('end', () => {
+    console.log('Stream ended, reconnecting...');
+    setTimeout(() => https.get(options), 5000);
+  });
+  
+}).on('error', (err) => {
+  console.error('Connection error:', err);
+  setTimeout(() => https.get(options), 5000);
+});
+```
+
+## Discord Alert Bot
+
+Send alerts to Discord when specific conditions are met:
+
+```python
+import requests
+import json
+
+API_KEY = "YOUR_API_KEY"
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/YOUR_WEBHOOK"
+
+def send_discord_alert(event):
+    """Send alert to Discord channel"""
+    token = event.get('token', {})
+    pair = event.get('pair', {})
+    features = event.get('features', {})
+    
+    embed = {
+        "title": f"🔥 {token.get('symbol')} Signal",
+        "description": f"New swap on {pair.get('dex')}",
+        "color": 0x00ff00,
+        "fields": [
+            {
+                "name": "Price",
+                "value": f"${pair.get('price_usd', 0):.6f}",
+                "inline": True
+            },
+            {
+                "name": "5m Change",
+                "value": f"{features.get('price_change_5m', 0):.2f}%",
+                "inline": True
+            },
+            {
+                "name": "Buy Ratio",
+                "value": f"{features.get('buy_ratio', 0):.2f}",
+                "inline": True
+            },
+            {
+                "name": "Token",
+                "value": token.get('address', 'N/A'),
+                "inline": False
+            }
+        ],
+        "url": pair.get('url', ''),
+        "timestamp": event.get('timestamp')
+    }
+    
+    requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]})
+
+def monitor():
+    """Monitor stream and send alerts"""
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    with requests.get(
+        "http://66.42.112.172:8000/stream/pro",
+        headers=headers,
+        stream=True
+    ) as response:
+        for line in response.iter_lines():
+            if line:
+                try:
+                    event = json.loads(line)
+                    features = event.get('features', {})
+                    
+                    # Alert on 20%+ price move
+                    if abs(features.get('price_change_5m', 0)) > 20:
+                        send_discord_alert(event)
+                
+                except Exception as e:
+                    print(f"Error: {e}")
+
+if __name__ == "__main__":
+    monitor()
+```
+
+## Data Warehouse Integration
+
+Stream to PostgreSQL/Snowflake:
+
+```python
+import requests
+import json
+import psycopg2
+
+API_KEY = "YOUR_API_KEY"
+
+# Connect to warehouse
+conn = psycopg2.connect(
+    host="your-warehouse.com",
+    database="analytics",
+    user="user",
+    password="password"
+)
+
+def insert_event(event):
+    """Insert into data warehouse"""
+    cursor = conn.cursor()
+    
+    token = event.get('token', {})
+    pair = event.get('pair', {})
+    features = event.get('features', {})
+    
+    cursor.execute("""
+        INSERT INTO swap_events (
+            timestamp, token_address, token_symbol,
+            pair_address, dex, price_usd, buy_ratio
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (
+        event.get('timestamp'),
+        token.get('address'),
+        token.get('symbol'),
+        pair.get('address'),
+        pair.get('dex'),
+        pair.get('price_usd'),
+        features.get('buy_ratio')
+    ))
+    
+    conn.commit()
+
+def stream_to_warehouse():
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    with requests.get(
+        "http://66.42.112.172:8000/stream/enterprise",
+        headers=headers,
+        stream=True
+    ) as response:
+        for line in response.iter_lines():
+            if line:
+                try:
+                    event = json.loads(line)
+                    insert_event(event)
+                except Exception as e:
+                    print(f"Error: {e}")
+
+stream_to_warehouse()
+```
+
+## Robust Connection Handling
+
+Handle reconnections and rate limits:
+
+```python
+import requests
+import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+API_KEY = "YOUR_API_KEY"
+
+def create_session():
+    """Session with automatic retries"""
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    return session
+
+def robust_stream():
+    """Stream with auto-reconnection"""
+    session = create_session()
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    while True:
+        try:
+            print("Connecting...")
+            
+            with session.get(
+                "http://66.42.112.172:8000/stream/pro",
+                headers=headers,
+                stream=True,
+                timeout=30
+            ) as response:
+                response.raise_for_status()
+                print("Connected!")
+                
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            event = json.loads(line)
+                            print(f"Event: {event.get('token', {}).get('symbol')}")
+                        except json.JSONDecodeError:
+                            continue
+        
+        except requests.exceptions.RequestException as e:
+            print(f"Error: {e}. Reconnecting in 5s...")
+            time.sleep(5)
+        
+        except KeyboardInterrupt:
+            break
+
+robust_stream()
+```
+
+## Go Implementation
+
+```go
+package main
+
+import (
+    "bufio"
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+    "os"
+    "time"
+)
+
+type SwapEvent struct {
+    Timestamp string `json:"timestamp"`
+    Token     struct {
+        Address string `json:"address"`
+        Symbol  string `json:"symbol"`
+    } `json:"token"`
+    Pair struct {
+        PriceUSD float64 `json:"price_usd"`
+        Dex      string  `json:"dex"`
+    } `json:"pair"`
+}
+
+func streamEvents(apiKey string) {
+    url := "http://66.42.112.172:8000/stream/pro"
+    
+    for {
+        req, err := http.NewRequest("GET", url, nil)
+        if err != nil {
+            log.Printf("Error creating request: %v", err)
+            time.Sleep(5 * time.Second)
+            continue
+        }
+        
+        req.Header.Set("Authorization", "Bearer "+apiKey)
+        
+        client := &http.Client{Timeout: 0}
+        resp, err := client.Do(req)
+        if err != nil {
+            log.Printf("Error: %v. Reconnecting...", err)
+            time.Sleep(5 * time.Second)
+            continue
+        }
+        
+        scanner := bufio.NewScanner(resp.Body)
+        for scanner.Scan() {
+            var event SwapEvent
+            if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+                continue
+            }
+            
+            fmt.Printf("Swap: %s at $%.4f on %s\n",
+                event.Token.Symbol,
+                event.Pair.PriceUSD,
+                event.Pair.Dex)
+        }
+        
+        resp.Body.Close()
+        time.Sleep(5 * time.Second)
+    }
+}
+
+func main() {
+    apiKey := os.Getenv("TRENCHFEED_API_KEY")
+    streamEvents(apiKey)
+}
+```
+
+## Rate Limit Handling
+
+Example with exponential backoff:
+
+```python
+import time
+import requests
+
+def make_request_with_backoff(url, headers, max_retries=5):
+    """Retry with exponential backoff on rate limits"""
+    retries = 0
+    
+    while retries < max_retries:
+        response = requests.get(url, headers=headers, stream=True)
+        
+        if response.status_code == 429:
+            wait_time = 2 ** retries
+            print(f"Rate limited. Waiting {wait_time}s...")
+            time.sleep(wait_time)
+            retries += 1
+        elif response.status_code == 200:
+            return response
+        else:
+            raise Exception(f"Error: {response.status_code}")
+    
+    raise Exception("Max retries exceeded")
+
+# Usage
+headers = {"Authorization": f"Bearer {API_KEY}"}
+response = make_request_with_backoff(
+    "http://66.42.112.172:8000/stream/pro",
+    headers
+)
+```
+
+## Monitoring Usage Stats
+
+Check your current usage:
+
+```python
+import requests
+
+def check_usage(api_key):
+    """Get current usage statistics"""
+    response = requests.get(
+        "http://66.42.112.172:8000/stats",
+        headers={"Authorization": f"Bearer {api_key}"}
+    )
+    
+    stats = response.json()
+    
+    print(f"Tier: {stats['tier']}")
+    print(f"Requests this minute: {stats['current_usage']['requests_this_minute']}")
+    print(f"Limit: {stats['limits']['requests_per_minute']}")
+    print(f"Active connections: {stats['current_usage']['active_connections']}")
+    
+    # Warning if approaching limit
+    usage_pct = (stats['current_usage']['requests_this_minute'] / 
+                 stats['limits']['requests_per_minute']) * 100
+    
+    if usage_pct > 90:
+        print(f"⚠️ WARNING: At {usage_pct:.1f}% of rate limit!")
+
+check_usage(API_KEY)
+```
+
+<Note>
+  All examples are production-ready with error handling and reconnection logic. Customize the trading logic for your strategy.
+</Note>
+
+## Need Help?
+
+- Check our [Rate Limits](/rate-limits) documentation
+- Review [Authentication](/authentication) best practices
+- Contact support@trenchfeed.io for custom integration assistance
